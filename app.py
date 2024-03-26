@@ -1,208 +1,266 @@
-import streamlit as st
-import pickle
-import numpy as np
-import pandas as pd
 import os
-from sklearn.preprocessing import StandardScaler
+import time
+import pickle
+import re
 
-#For Project 2
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from wordcloud import WordCloud
+from sklearn.pipeline import Pipeline
+import nltk
+
+import base64
+from pathlib import Path
+
+
+#For Project 3
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
-model_filepath = os.path.join(__location__, "lasso.pkl")
-scaler_filepath = os.path.join(__location__, "scaler.pkl")
+bin_file = os.path.join(__location__, "top_banner.jpg")
+
+
+tokenized_df_path = os.path.join(__location__, "final_tokenized_df.pkl")
+model_filepath = os.path.join(__location__, "model.pkl")
 
 # load the train model
-with open(model_filepath, 'rb') as mf:
-    model = pickle.load(mf)
+with open(model_filepath, 'rb') as handle:
+    model = pickle.load(handle)
 
-with open(scaler_filepath, 'rb') as sf:
-    scalerfile = pickle.load(sf)
+
+with open(tokenized_df_path, 'rb') as new_handle:
+    tokenized_df = pickle.load(new_handle)
+
 
 def main():
-    style = """<div style='background-color:grey; padding:12px'>
-              <h1 style='color:black'>House Price Evaluator</h1>
-              <p style='color:black'>Developed by: Pius Yee | Lim Zheng Gang | Eugene Matthew Cheong</p>
-       </div>"""
+    st.set_page_config(layout="wide")
+    style = """<p style='color:white'>Developed by: Eugene Matthew Cheong | Pius Yee | Conrad Aw </p>
+       """
+    # Add a banner image
+    st.image("top_banner.png", use_column_width=True)  # Adjust the path to your image file
+    #st.markdown(img_to_html(bin_file), unsafe_allow_html=True)
     st.markdown(style, unsafe_allow_html=True)
-    left, right = st.columns((2,2))
-
-    input_planning_area = left.selectbox('Select preferred planning area', ('Ang Mo Kio', 'Bedok', 'Bishan', 'Bukit Batok', 'Bukit Merah', 'Bukit Panjang', 'Bukit Timah', 'Changi', 'Choa Chu Kang','Clementi', 'Downtown Core', 'Geylang', 'Hougang', 'Jurong East', 'Jurong West', 'Kallang', 'Marine Parade', 'Novena', 'Outram', 'Pasir Ris', 'Punggol', 'Queenstown', 'Rochor', 'Sembawang', 'Sengkang','Serangoon', 'Tampines', 'Tanglin', 'Toa Payoh', 'Western Water Catchment', 'Woodlands', 'Yishun'), index=11)
-    input_flat_type = right.selectbox('Select Flat Type',('1 ROOM', '2 ROOM', '3 ROOM', '4 ROOM', '5 ROOM', 'EXECUTIVE', 'MULTI-GENERATION'), index=3)
-    input_is_premium = left.selectbox('Improved-Masionette or DBSS?', ('No', 'Yes'))
-    input_is_terrace = left.selectbox('Terrace type?', ('No', 'Yes'))
-    input_is_superlargeterrace = right.selectbox('Terrace and larger than 2200 square feet?', ('No', 'Yes'))
-    input_is_pre_war = left.selectbox('Pre-War type?', ('No', 'Yes'))
-    input_floor_area_sqft = left.slider('Enter preferred floor area (square feet)',  step=1.0, format='%.2f',min_value=0.0, max_value=5000.0, value= 900.0)
-    input_mid = right.slider('Enter preferred floor in the block', step =1,format="%f",min_value=1, max_value=50, value=3)
-    input_max_floor_lvl = left.number_input('Preferred maximum floor of the block', step=1.0, format='%.1f', value=20.0)
-    input_tenure = right.slider('Enter preferred tenure', step =1,format="%f",min_value=1, max_value=99, value=19)
-    input_transaction_year = left.slider('Input Transaction Year', step =1,format="%f",min_value=2012, max_value=2021, value=2021)
-    input_mrt_nearest_distance = right.slider('Preferred distance to MRT (metres)',  step=1.0, format='%.2f',min_value=0.0, max_value=10000.0, value= 3000.0)
-    input_mh = left.slider('Enter preferred distance to Mall (metres)', step=1.0, format='%.2f',min_value=1.0, max_value=4000.0, value= 100.0)
-    input_from_centre_distance = st.slider('Preferred distance from CBD (metres)',  step=1.0, format='%.2f',min_value=0.0, max_value=35000.0, value= 7200.0)
-
-    button = st.button('Predict')
+    
+    #Setting up Side Bar 
+    sidebar_num_post_value = st.sidebar.number_input('Number of Post', step=1, format='%d', value=400)
+    sidebar_num_comments_value = st.sidebar.number_input('Number of Comments', step=1, format='%d', value=1)
+    sidebar_num_toptrendingwords = st.sidebar.slider('Number of Top Trending Words', step =1,format="%f",min_value=1, max_value=200, value=120)
+    sidebar_filter_word_input = st.sidebar.text_input("Filter: (Use commas as separator for mulitple keywords to filter. No spaces.)")
+    #Setting up Main
+    reddit_input = st.text_input("Input subreddit r/: (Use commas as separator for mulitple reddits) | NOTE: Only r/Parenting is being used for testing.", value="Parenting")
+    submit_button = st.button('Submit')
+    #Create Columns
+    left, right = st.columns((4,1))
     # if button is pressed
-    if button:
-        # make prediction
-        result = predict(input_planning_area,input_flat_type,input_is_premium,input_is_terrace,input_is_pre_war,input_is_superlargeterrace,input_floor_area_sqft,input_mid,input_max_floor_lvl,input_tenure,input_transaction_year,input_mrt_nearest_distance,input_mh,input_from_centre_distance)
-
-        st.success(f'The predicted evaluation value is ${result}')
-
-
-def process_mh(input_mh):
-    #converts to KM
-    return input_mh/1000
-
-def process_planning_area(input_planning_area):
-    list_planning_area = ['Kallang', 'Bishan', 'Bukit Batok', 'Yishun', 'Geylang', 'Hougang',
-       'Bedok', 'Sengkang', 'Tampines', 'Serangoon', 'Bukit Merah',
-       'Bukit Panjang', 'Woodlands', 'Jurong West', 'Toa Payoh',
-       'Choa Chu Kang', 'Sembawang', 'Novena', 'Ang Mo Kio', 'Pasir Ris',
-       'Clementi', 'Punggol', 'Jurong East', 'Rochor', 'Queenstown',
-       'Bukit Timah', 'Outram', 'Tanglin', 'Marine Parade',
-       'Western Water Catchment', 'Downtown Core', 'Changi']  
-
-    selected_planning_area = input_planning_area
-
-    area_category_mapping = {'Group1': ['Tanglin', 'Bukit Timah', 'Outram','Downtown Core','Bishan'],
-                             'GroupJB': ['Bukit Merah','Jurong East'],
-                             'GroupCQS': ['Queenstown','Serangoon','Clementi'],
-                             'GroupCM': ['Marine Parade','Changi'],
-                             'GroupYH': ['Hougang','Yishun'],
-                             'GroupPWC': ['Bukit Panjang','Choa Chu Kang','Woodlands'],
-                             'Group2': ['Western Water Catchment'],
-                             'GroupA': ['Ang Mo Kio']
-                             }
-    
-    selected_category_results = {}
-    for group, area in area_category_mapping.items():
-        if selected_planning_area in area:
-            selected_category_results[group] = 1
-        else:
-            selected_category_results[group] = 0
-
-
-    mature_list = ["Ang Mo Kio","Bedok","Bishan","Bukit Merah","Bukit Timah","Clementi","Downtown Core","Geylang","Kallang","Marine Parade", "Novena", "Outram", "Pasir Ris", "Queenstown", "Rochor","Serangoon","Tampines","Tanglin","Toa Payoh"] 
-
-    if selected_planning_area in mature_list:
-        selected_category_results['mature'] = 1
-    else:
-        selected_category_results['mature'] = 0
-
-    
-    return selected_category_results
-
-
-def process_tenure_buckets(input_tenure):
-    if input_tenure in range(0,11):
-        return 1
-    else:
-        return 0
-
-
-def process_year_category(input_transaction_year):
-    group_year_dict = {'Group1': [2015,2016,2018],
-                       'Group2': [2014,2017,2020],
-                       'Group0': [2019]
-                       }
-    
-    
-    selected_year_results = {}
-    for group, year in group_year_dict.items():
-        if input_transaction_year in year:
-            selected_year_results[group] = 1
-        else:
-            selected_year_results[group] = 0
-    
-    return selected_year_results
-
-
-def process_choice(input_choice):
-    if input_choice == "Yes":
-        return 1
-    else:
-        return 0
-
-
-def process_flat_type(input_flat_type):
-    flat_type_dict = {}
-    if input_flat_type == '1 ROOM': #1 Room
-        flat_type_dict['1 ROOM'] = 1
-        flat_type_dict['2 ROOM'] = 0
-    elif input_flat_type == '2 ROOM':
-        flat_type_dict['1 ROOM'] = 0
-        flat_type_dict['2 ROOM'] = 1
-    else:
-        flat_type_dict['1 ROOM'] = 0
-        flat_type_dict['2 ROOM'] = 0
-    
-    return flat_type_dict
+    if submit_button:
+        reddit_input_list = str(reddit_input).split(",")
+        st.success(start_extraction(left,right,sidebar_num_post_value,sidebar_num_comments_value,sidebar_num_toptrendingwords,sidebar_filter_word_input,reddit_input_list))
 
 
 
+def img_to_bytes(img_path):
+    img_bytes = Path(img_path).read_bytes()
+    encoded = base64.b64encode(img_bytes).decode()
+    return encoded
 
 
-def predict(input_planning_area,input_flat_type,input_is_premium,input_is_terrace,input_is_pre_war,input_is_superlargeterrace,input_floor_area_sqft,input_mid,input_max_floor_lvl,input_tenure,input_transaction_year,input_mrt_nearest_distance,input_mh,input_from_centre_distance):
-    # processing user input
+def img_to_html(img_path):
+    img_html = "<img src='data:image/png;base64,{}' class='img-fluid'> ".format(
+      img_to_bytes(img_path)
+    )
+    return img_html
 
-    mid = input_mid
-    max_floor_lvl = input_max_floor_lvl
-    mrt_nearest_distance = input_mrt_nearest_distance
-    tenure = input_tenure
-    mh = process_mh(input_mh)
-    
-    processed_planning_area = process_planning_area(input_planning_area)
-    planning_area_category_Group1 = processed_planning_area['Group1'] #Returns boolean
-    planning_area_category_GroupCM = processed_planning_area['GroupCM'] #Returns boolean
-    planning_area_category_GroupPWC = processed_planning_area['GroupPWC'] #Returns boolean
-    planning_area_category_GroupYH = processed_planning_area['GroupYH'] #Returns boolean
-    planning_area_category_GroupCQS = processed_planning_area['GroupCQS'] #Returns boolean
-    planning_area_category_GroupJB = processed_planning_area['GroupJB'] #Returns boolean
-    planning_area_category_GroupA = processed_planning_area['GroupA'] #Returns boolean
-    mature = processed_planning_area['mature'] #Returns boolean
+def gather_comments(comments, comment_dict):
+    for comment in comments:
+        time.sleep(0.1)
+        comment_dict.append(comment.body)
+        if len(comment.replies) > 0:
+            comment_dict.append(comment.replies)
+            gather_comments(comment.replies, comment_dict)
+            
 
-    tenure_buckets_0_10 = process_tenure_buckets(input_tenure) #Returns boolean
+def remove_characters(text):
+  pattern = '<[^>]*>'
+  replacement = ''
+  result_string = re.sub(pattern, replacement, str(text))
+  return result_string
 
-    from_centre_distance = input_from_centre_distance/1000
 
-    processed_year_category = process_year_category(input_transaction_year) #Returns a dictionary
-    year_category_Group2 = processed_year_category['Group2']
-    year_category_Group1 = processed_year_category['Group1']
-    year_category_Group0 = processed_year_category['Group0']
+# def access_reddit_api():
+#     # Initialize a Reddit instance with your API credentials
+#     reddit = praw.Reddit(
+#         client_id='YheGGNwn1zlIePJLrJZZYw',
+#         client_secret='JWe8I5cM8YCZGowmL_WPe1d-UuXuFw',
+#         user_agent='eumattbro'
+#     )
 
-    is_premium = process_choice(input_is_premium)
-    is_terrace = process_choice(input_is_terrace)
-    is_pre_war = process_choice(input_is_pre_war)
-    is_superlargeterrace = process_choice(input_is_superlargeterrace)
+#     return reddit
 
-    processed_flat_type = process_flat_type(input_flat_type) #Returns a dictionary
-    flat_type_1_ROOM = processed_flat_type['1 ROOM']
-    flat_type_2_ROOM = processed_flat_type['2 ROOM']
 
-    floor_area_sqft = input_floor_area_sqft
+# def web_scraping(sub_reddits):
+        # ext = []
+        # reddit = access_reddit_api
 
-    required_model_inputs= [mid, floor_area_sqft, max_floor_lvl, mrt_nearest_distance, is_pre_war, mature, year_category_Group1, planning_area_category_GroupA, planning_area_category_GroupCM, planning_area_category_GroupCQS, planning_area_category_GroupJB, planning_area_category_GroupPWC,planning_area_category_GroupYH, tenure, tenure_buckets_0_10, year_category_Group0, year_category_Group1, year_category_Group2, is_premium, is_terrace, is_superlargeterrace, flat_type_1_ROOM, flat_type_2_ROOM, from_centre_distance, mh]
+        # for sub_reddit in sub_reddits:
+        #     for submission in reddit.subreddit(sub_reddit).hot(limit=post_limits):
+        #         post_data = ({
+        #             "subreddit": sub_reddit,
+        #             "title": submission.title,
+        #             "selftext": submission.selftext,
+        #             "score": submission.score,
+        #             "url": submission.url,
+        #             })
+
+
+        #         submission.comments.replace_more(limit=comment_limits)
+        #         post_data['comments'] = []
+
+        #         gather_comments(submission.comments, post_data['comments']) 
+
+
+        #         ext.append(post_data)
+        # # Create pandas dataframe
+        # reddit_df = pd.DataFrame(ext)
+
+        # return reddit_df
+
+
+# def clean_scrape_data(reddit_df):
+#     # create a new data frame and keep messages from title, selftext and comments
+#     final_df = pd.DataFrame({'category':[],'text':[], "mum":[]})
+#     index_count = 0
+#     for i in range(reddit_df.shape[0]):
+#         final_df.loc[index_count] = ["title",reddit_df.loc[i]['title'],reddit_df.loc[i]['subreddit']]
+#         index_count += 1
+#         final_df.loc[index_count] = ["selftext",reddit_df.loc[i]['selftext'],reddit_df.loc[i]['subreddit']]
+#         index_count += 1
+#         for cmt in reddit_df.comments: # split different comments into separate rows
+#             final_df.loc[index_count] = ["comment",cmt,reddit_df.loc[i]['subreddit']]
+#             index_count += 1
     
 
+#     final_df['text'] = final_df['text'].apply(remove_characters)
 
-    df = pd.DataFrame(required_model_inputs).transpose()
-    df.columns = ['mid', 'floor_area_sqft', 'max_floor_lvl', 'mrt_nearest_distance',
-       'is_pre_war', 'mature', 'planning_area_category_Group1',
-       'planning_area_category_GroupA', 'planning_area_category_GroupCM',
-       'planning_area_category_GroupCQS', 'planning_area_category_GroupJB',
-       'planning_area_category_GroupPWC', 'planning_area_category_GroupYH',
-       'tenure', 'tenure_buckets_0-10', 'year_category_Group0',
-       'year_category_Group1', 'year_category_Group2', 'is_premium',
-       'is_terrace', 'is_superlargeterrace', 'flat_type_1 ROOM',
-       'flat_type_2 ROOM', 'from_centre_distance', 'mh']
+#     # further remove comments with "[removed] and [deleted]"
+#     final_df = final_df[~final_df['text'].apply(lambda x: any(word in x for word in ['[removed]','[deleted]']))]
     
+#     final_df['text'] = final_df['text'].replace('\n', '')
+
+#     # Removing special characters from the 'text' column
+#     final_df['text'] = final_df['text'].replace(r'[^a-zA-Z0-9\?\! ]', '', regex=True)
+
+#     # To identify the auto message, we find similar message which more than 10 letters
+#     # create a new data frame
+#     check_auto = pd.DataFrame(final_df.text.value_counts())
+#     check_auto = check_auto.reset_index()
+#     # identify auto bot message with duplicate same message and more than 20 words
+#     check_auto = check_auto[(check_auto.text.str.len() >20) & (check_auto['count'] > 2)]
+
+#     # remove the bot message from the dataframe
+#     final_df = final_df[~final_df['text'].isin(list(check_auto.text))]
+
+#     final_df = final_df[~final_df['text'].map(lambda x: x == "" or pd.isnull(x))]
+
+#     return final_df
+
+
+# def tokenize_data(df):
+#     # instantiate Tokenizer with Regex
+#     tokenizer = RegexpTokenizer(r'[^\d\W]+') # keep words only  
+
+#     # "Run" Tokenizer and create new column for clean data
+#     df['text'] = df['text'].astype("str")
+#     df['text'] = [tokenizer.tokenize(x.lower()) for x in list(df.text)]
+
+#     # Remove stopwords from "spam_tokens."
+#     df['text'] = df['text'].apply(lambda x: [token for token in x if token not in stopwords.words('english')])
+
+#     # Instantiate lemmatizer.
+#     lemmatizer = WordNetLemmatizer()
+#     lst = []
+#     for row in list(df['text']):
+#         lst.append([lemmatizer.lemmatize(i) for i in row])
+
+#     df['text'] = lst
+#     df['text'] = df['text'].astype("string")
+
+#     text_result = df.text
+
+#     return text_result
+
+def start_extraction(left,right,post_limits,comment_limits,num_of_trending_words,filter_words,sub_reddits):
+    with st.spinner("Extracting"):
+        time.sleep(2)
+
+        result_X = tokenized_df.text
+        tokenized_df["mum"] = model.predict(result_X)
     
-    X_scaled = scalerfile.transform(df)
-    y_pred = model.predict(X_scaled)
-    predict_value = np.exp(y_pred)-1
-    result = str(format(predict_value[0],'.2f'))
-    result = result.replace("[","").replace("]","")
-    return result
+    st.success("Finish Extraction")
+    with st.spinner("Processing"):
+
+        mum_found_list = []
+
+        for p in list(tokenized_df[tokenized_df.mum == 1].text):
+            p = p.replace('[', '').replace(']', '').replace("'", "")
+            currentword_list = p.split(', ')
+            for pp in currentword_list: 
+                mum_found_list.append(pp)
+        
+
+        try:
+            filter_words_list = filter_words.split(",")
+        except:
+            filter_words_list = list(filter_words)
+            
+        for filter_word in filter_words_list:
+            for index, mum_word in enumerate(mum_found_list):
+                if mum_word == filter_word:
+                    del mum_found_list[index]
+
+        mum_found_result = ', '.join(mum_found_list)
+
+        
+    st.success("Done!")
+
+    try:
+        show_word_cloud(left,num_of_trending_words,mum_found_result)
+        show_ngram(mum_found_list)
+    except:
+        st.error("There are no words available to generate a Word Cloud.")
+
+
+
+def show_word_cloud(column,num_of_words,text):
+    # Create and generate a word cloud image:
+    wordcloud = WordCloud(max_words=num_of_words).generate(text)
+
+    # Display the generated image:
+    fig, ax = plt.subplots()
+    ax.imshow(wordcloud, interpolation='bilinear')
+    ax.axis("off")
+    plt.gcf().set_facecolor('none')
+    plt.rcParams['text.color'] = 'white'
+    column.pyplot(fig)
+
+
+def show_ngram(text_list):
+# plotting for N-gram
+    fig, axes = plt.subplots(2, 2, figsize=(15,50)) 
+    pd.Series(nltk.ngrams(text_list, 1)).value_counts().sort_values()[-20:].plot(kind='barh',title='Trending Words (1-gram)',ax=axes[0,0], xlabel='count')
+    pd.Series(nltk.ngrams(text_list, 2)).value_counts().sort_values()[-20:].plot(kind='barh',title='Trending Words (2-gram)',ax=axes[0,1], xlabel='count')
+    pd.Series(nltk.ngrams(text_list, 3)).value_counts().sort_values()[-20:].plot(kind='barh',title='Trending Words (3-gram)',ax=axes[1,0], xlabel='count')
+    pd.Series(nltk.ngrams(text_list, 4)).value_counts().sort_values()[-20:].plot(kind='barh',title='Trending Words (4-gram)',ax=axes[1,1], xlabel='count')
+
+    plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.6, wspace=0.5, hspace=0.2)
+    
+    plt.gcf().set_facecolor('none')
+
+    params = {"ytick.color" : "white",
+            "xtick.color" : "white",
+            "axes.labelcolor" : "white",
+            "axes.edgecolor" : "white"}
+    plt.rcParams.update(params)
+    st.pyplot(fig)
 
 
 
