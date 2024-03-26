@@ -3,4 +3,5 @@ streamlit
 matplotlib
 seaborn
 Wordcloud
+nltk
 scikit-learn==1.2.1
