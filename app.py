@@ -239,7 +239,6 @@ def show_word_cloud(column,num_of_words,text):
     ax.imshow(wordcloud, interpolation='bilinear')
     ax.axis("off")
     plt.gcf().set_facecolor('none')
-    plt.rcParams['text.color'] = 'white'
     column.pyplot(fig)
 
 
@@ -254,12 +253,6 @@ def show_ngram(text_list):
     plt.subplots_adjust(left=0.1, bottom=0.1, right=0.9, top=0.6, wspace=0.5, hspace=0.2)
     
     plt.gcf().set_facecolor('none')
-
-    params = {"ytick.color" : "white",
-            "xtick.color" : "white",
-            "axes.labelcolor" : "white",
-            "axes.edgecolor" : "white"}
-    plt.rcParams.update(params)
     st.pyplot(fig)
 
 
